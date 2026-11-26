@@ -134,13 +134,110 @@ python -m pip install --upgrade pip
 
 Elle ne change pas les versions des dépendances déclarées dans les locks.
 
-## 6. Vérifier, committer et pousser le dépôt
+## 6. Configurer `.env` et démarrer PostgreSQL et l'API
 
-Après l'installation Python, le terminal se trouve dans `campusdata-etudiant`.
-Revenir dans le dossier parent avant les commandes Git ci-dessous :
+Depuis la racine de `campusdata-etudiant`, créer `.env` à partir du modèle
+uniquement s'il n'existe pas déjà :
 
 ```powershell
-Set-Location ".."
+if (-not (Test-Path .\.env)) { Copy-Item .\.env.example .\.env }
+```
+
+Générer un mot de passe aléatoire et le copier dans le presse-papiers sans
+l'afficher dans le terminal :
+
+```powershell
+$bytes = New-Object byte[] 32
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($bytes)
+$secret = -join ($bytes | ForEach-Object { $_.ToString("x2") })
+$rng.Dispose()
+Set-Clipboard -Value $secret
+Remove-Variable secret, bytes, rng
+```
+
+Ouvrir `.env` et remplacer les deux occurrences de `CHANGE_ME` par ce mot de
+passe, puis enregistrer. Ne pas partager le contenu de `.env`. Conserver
+`DATABASE_URL` avec l'hôte `db` et le port `5432` dans ce fichier : il sert à
+Compose. Le `.gitignore` exclut `.env`; vérifier avec :
+
+```powershell
+git check-ignore .env
+```
+
+Vérifier que Docker Desktop est lancé, puis démarrer uniquement la base de
+données de développement :
+
+```powershell
+docker compose --env-file .\.env -f .\compose.dev.yaml up -d db
+docker compose --env-file .\.env -f .\compose.dev.yaml ps
+```
+
+Le résultat attendu est un service `db` `Up (healthy)` et le port
+`127.0.0.1:5433` relié au port PostgreSQL `5432` du conteneur.
+
+Pour lancer l'API sur le poste, utiliser un DSN qui pointe vers
+`127.0.0.1:5433`. Dans le terminal qui servira à lancer Uvicorn, se placer à
+la racine du dépôt et activer le venv. Si c'est un nouveau terminal, la
+politique `Process` peut devoir être réappliquée :
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\.venv\Scripts\Activate.ps1
+python --version
+python -c "import sys; print(sys.executable)"
+```
+
+Vérifier que Python affiche `3.12.x` et que son chemin contient
+`campusdata-etudiant\.venv`. Toujours depuis la racine du dépôt, charger le
+mot de passe depuis `.env` sans l'afficher, puis se placer dans `api/` avant
+de démarrer Uvicorn :
+
+```powershell
+$passwordLine = Get-Content .\.env | Where-Object { $_ -match '^POSTGRES_PASSWORD=' } | Select-Object -First 1
+if (-not $passwordLine) { throw "POSTGRES_PASSWORD absent de .env" }
+$password = $passwordLine -replace '^POSTGRES_PASSWORD=', ''
+$env:DATABASE_URL = "postgresql+psycopg://campus:$password@127.0.0.1:5433/campus"
+Remove-Variable password, passwordLine
+Set-Location .\api
+python -m uvicorn app.main:app --reload
+```
+
+Le terminal doit maintenant se trouver dans
+`campusdata-etudiant\api`. Ce changement de dossier est nécessaire : le
+paquet `app` se trouve dans `api\app`. Si Uvicorn est lancé depuis la racine
+du dépôt, l'erreur `No module named 'app'` apparaît.
+
+Laisser ce terminal ouvert. Dans un second terminal, vérifier les sondes :
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health/live
+Invoke-RestMethod http://127.0.0.1:8000/health/ready
+Invoke-RestMethod http://127.0.0.1:8000/api/version
+```
+
+La réponse attendue est `ok` pour la liveness, `ready` pour la readiness et
+`dev` pour la version locale. La readiness vérifie une connexion PostgreSQL
+avec `SELECT 1`; elle ne valide pas encore les tables métier. Le starter ne
+fournit que ces routes de santé et de version.
+
+Pour arrêter l'API, utiliser `Ctrl+C` dans son terminal. Pour arrêter la base
+sans supprimer ses données, depuis la racine du dépôt :
+
+```powershell
+docker compose --env-file .\.env -f .\compose.dev.yaml stop db
+```
+
+Ne pas ajouter `--volumes` à une commande de nettoyage si les données locales
+doivent être conservées.
+
+## 7. Vérifier, committer et pousser le dépôt
+
+Se placer dans le dossier parent qui contient `campusdata-etudiant` avant les
+commandes Git ci-dessous :
+
+```powershell
+Set-Location "C:\chemin\vers\PROJECT"
 git -C .\campusdata-etudiant status --short --branch
 ```
 
