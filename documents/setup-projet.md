@@ -267,3 +267,75 @@ Après le push, le statut attendu est `## main...origin/main` sans fichier
 modifié. Un `M` devant un chemin indique une modification locale non commitée :
 `git push` ne l'envoie pas. Examiner le changement avec `git diff -- chemin`,
 puis l'ajouter, le vérifier, le committer et le pousser s'il doit être partagé.
+
+## 8. Essayer les routes à la main avec PowerShell
+
+Ces commandes remplacent l'exemple Bash `curl`/`jq` du support. Garder le
+terminal 1 avec l'API en marche et exécuter les commandes suivantes une par
+une dans le terminal 2. Elles supposent que l'API locale est disponible sur
+`http://127.0.0.1:8000`, que PostgreSQL est démarré, et que les tables ont été
+créées avec `python -m app.init_db`.
+
+Depuis la racine du dépôt étudiant, définir l'adresse de l'API :
+
+```powershell
+Set-Location "C:\chemin\vers\campusdata-etudiant"
+$API_URL = "http://127.0.0.1:8000"
+```
+
+### Créer un jeu
+
+Le nom inclut une date et une heure afin de pouvoir rejouer l'exemple sans
+réutiliser un nom déjà pris. Il est écrit sans accent pour éviter une
+différence d'encodage du terminal. Convertir explicitement le JSON en octets
+UTF-8 évite l'erreur de décodage du corps HTTP :
+
+```powershell
+$datasetName = "Batiment A $(Get-Date -Format 'yyyyMMdd-HHmmss')"
+$createJson = @{ name = $datasetName } | ConvertTo-Json -Compress
+$createBody = [System.Text.Encoding]::UTF8.GetBytes($createJson)
+$dataset = Invoke-RestMethod -Method Post -Uri "$API_URL/api/datasets" -ContentType "application/json; charset=utf-8" -Body $createBody
+$DATASET_ID = $dataset.id
+"Jeu : $DATASET_ID"
+PPPPPPPPPPPPPPPPPPPPPP
+
+$dataset = Invoke-RestMethod -Method Post -Uri "$API_URL/api/datasets" -ContentType "application/json" -Body (@{ name = "Batiment A" } | ConvertTo-Json)
+$DATASET_ID = $dataset.id
+"Jeu : $DATASET_ID"
+```
+
+La réponse attendue contient un UUID après `Jeu :`. Si la requête échoue,
+PowerShell affiche l'erreur HTTP; ne continuez pas avec un identifiant vide.
+
+### Déposer le CSV et lire le statut
+
+Exécuter depuis la racine, où se trouve le dossier `data` :
+
+```powershell
+$ingestion = Invoke-RestMethod -Method Post -Uri "$API_URL/api/datasets/$DATASET_ID/ingestions?filename=mesures-salles-2026-10-05.csv" -ContentType "text/csv" -InFile ".\data\mesures-salles-2026-10-05.csv"
+$INGESTION_ID = $ingestion.id
+"Dépôt : $INGESTION_ID"
+```
+
+Lire ensuite le statut du dépôt :
+
+```powershell
+$resultat = Invoke-RestMethod -Method Get -Uri "$API_URL/api/ingestions/$INGESTION_ID"
+$resultat.status
+```
+
+Le statut initial attendu est `pending` : l'API a reçu le fichier, mais le
+worker ne l'a pas encore traité. Le corps CSV doit respecter la limite de
+taille configurée par l'API.
+
+### Vérifier les réponses d'erreur
+
+`curl.exe` affiche uniquement le code HTTP, sans nécessiter `jq`. La première
+commande réutilise le JSON du jeu créé et doit obtenir `409` (nom déjà pris).
+Les deux autres doivent obtenir `415` (type non accepté) et `422` (corps vide).
+
+```powershell
+curl.exe -sS -o NUL -w "nom déjà pris : %{http_code}`n" -X POST "$API_URL/api/datasets" -H "Content-Type: application/json" --data-raw $createJson
+curl.exe -sS -o NUL -w "type JSON : %{http_code}`n" -X POST "$API_URL/api/datasets/$DATASET_ID/ingestions?filename=a.csv" -H "Content-Type: application/json" --data "{}"
+curl.exe -sS -o NUL -w "corps vide : %{http_code}`n" -X POST "$API_URL/api/datasets/$DATASET_ID/ingestions?filename=a.csv" -H "Content-Type: text/csv" --data-binary ""
+```
